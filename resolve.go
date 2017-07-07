@@ -258,6 +258,7 @@ func do_send(c net.Conn, tryResolving <-chan *domainRecord) {
 		} else {
 			t = dnsTypeAAAA
 		}
+		if soa { t = dnsTypeSOA }
 		msg := packDns(dr.domain, dr.id, t)
 
 		_, err := c.Write(msg)
@@ -284,6 +285,7 @@ func do_receive(c net.Conn, resolved chan<- *domainAnswer) {
 		} else {
 			t = dnsTypeAAAA
 		}
+		if soa { t = dnsTypeSOA }
 		domain, id, ips := unpackDns(buf[:n], t)
 		resolved <- &domainAnswer{id, domain, ips}
 	}

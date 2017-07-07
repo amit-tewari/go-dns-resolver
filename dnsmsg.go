@@ -24,6 +24,7 @@ package main
 
 import (
 	"net"
+	"fmt"
 )
 
 // Integer to decimal.
@@ -931,4 +932,11 @@ func convertRR_AAAA(records []dnsRR) []net.IP {
                 addrs[i] = a
         }
         return addrs
+}
+
+func convertRR_SOA(records []dnsRR) string {
+        //addrs := make([]net.IP, len(records))
+	var soa_line string = "SOA"
+	fmt.Println(soa_line)
+        return soa_line
 }
