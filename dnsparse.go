@@ -27,7 +27,6 @@ func unpackDns(msg []byte, dnsType uint16) (domain string, id uint16, ips []net.
 	}
 
 	_, addrs, err := answer(domain, "server", d, dnsType)
-	var result string = "S"
 	if err == nil {
 		switch (dnsType) {
 		case dnsTypeA:
@@ -35,8 +34,8 @@ func unpackDns(msg []byte, dnsType uint16) (domain string, id uint16, ips []net.
 		case dnsTypeAAAA:
 			ips = convertRR_AAAA(addrs)
 		case dnsTypeSOA:
-			result = convertRR_SOA(addrs)
-			fmt.Println(result)
+			s := printStruct(d.answer[0]) + "\n"
+			fmt.Printf(s)
 		}
 	}
 	return
