@@ -935,8 +935,13 @@ func convertRR_AAAA(records []dnsRR) []net.IP {
 }
 
 func convertRR_SOA(records []dnsRR) string {
-        //addrs := make([]net.IP, len(records))
-	var soa_line string = "SOA"
-	fmt.Println(soa_line)
+        addrs := make([]net.IP, len(records))
+        soa_line := ""
+        for i, rr := range records {
+                a := make(net.IP, net.IPv6len)
+                addrs[i] = a
+		// https://github.com/amit-tewari/go-dns-resolver/blob/master/dnsmsg.go#L302
+		soa_line += soa_line + fmt.Sprintf("%d %s %s", rr.(*dnsRR_SOA).Serial, rr.(*dnsRR_SOA).Ns, rr.(*dnsRR_SOA).Mbox)
+	}
         return soa_line
 }

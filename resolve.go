@@ -62,7 +62,7 @@ func init() {
 	flag.BoolVar(&verbose, "v", false,
 		"Verbose logging")
 	flag.BoolVar(&soa, "soa", false,
-		"Verbose logging")
+		"Query SOA records")
 	flag.BoolVar(&ipv6, "6", false,
 		"Ipv6 - ask for AAAA, not A")
 }
@@ -146,6 +146,7 @@ type domainAnswer struct {
 	id     uint16
 	domain string
 	ips    []net.IP
+	soa_t  string
 }
 
 func do_map_guard(domains <-chan string,
@@ -221,7 +222,7 @@ func do_map_guard(domains <-chan string,
 
 				// without trailing dot
 				domain := dr.domain[:len(dr.domain)-1]
-				fmt.Printf("%s, %s\n", domain, strings.Join(s, " "))
+				fmt.Printf("%s %s%s\n", domain, strings.Join(s, " "), da.soa_t)
 
 				sumTries += dr.resend
 				domainCount += 1
@@ -286,7 +287,7 @@ func do_receive(c net.Conn, resolved chan<- *domainAnswer) {
 			t = dnsTypeAAAA
 		}
 		if soa { t = dnsTypeSOA }
-		domain, id, ips := unpackDns(buf[:n], t)
-		resolved <- &domainAnswer{id, domain, ips}
+		domain, id, ips, soa_t := unpackDns(buf[:n], t)
+		resolved <- &domainAnswer{id, domain, ips, soa_t}
 	}
 }
