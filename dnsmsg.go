@@ -23,8 +23,8 @@
 package main
 
 import (
-	"net"
 	"fmt"
+	"net"
 )
 
 // Integer to decimal.
@@ -925,23 +925,23 @@ func convertRR_A(records []dnsRR) []net.IP {
 }
 
 func convertRR_AAAA(records []dnsRR) []net.IP {
-        addrs := make([]net.IP, len(records))
-        for i, rr := range records {
-                a := make(net.IP, net.IPv6len)
-                copy(a, rr.(*dnsRR_AAAA).AAAA[:])
-                addrs[i] = a
-        }
-        return addrs
+	addrs := make([]net.IP, len(records))
+	for i, rr := range records {
+		a := make(net.IP, net.IPv6len)
+		copy(a, rr.(*dnsRR_AAAA).AAAA[:])
+		addrs[i] = a
+	}
+	return addrs
 }
 
 func convertRR_SOA(records []dnsRR) string {
-        addrs := make([]net.IP, len(records))
-        soa_line := ""
-        for i, rr := range records {
-                a := make(net.IP, net.IPv6len)
-                addrs[i] = a
+	addrs := make([]net.IP, len(records))
+	soa_line := ""
+	for i, rr := range records {
+		a := make(net.IP, net.IPv6len)
+		addrs[i] = a
 		// https://github.com/amit-tewari/go-dns-resolver/blob/master/dnsmsg.go#L302
 		soa_line += soa_line + fmt.Sprintf("%d %s %s", rr.(*dnsRR_SOA).Serial, rr.(*dnsRR_SOA).Ns, rr.(*dnsRR_SOA).Mbox)
 	}
-        return soa_line
+	return soa_line
 }

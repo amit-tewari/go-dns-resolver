@@ -143,10 +143,11 @@ type domainRecord struct {
 }
 
 type domainAnswer struct {
-	id     uint16
-	domain string
-	ips    []net.IP
-	soa_t  string
+	id       uint16
+	domain   string
+	ips      []net.IP
+	soa_t    string
+	dnsQtype uint16
 }
 
 func do_map_guard(domains <-chan string,
@@ -222,7 +223,7 @@ func do_map_guard(domains <-chan string,
 
 				// without trailing dot
 				domain := dr.domain[:len(dr.domain)-1]
-				fmt.Printf("%s %s%s\n", domain, strings.Join(s, " "), da.soa_t)
+				fmt.Printf("%s %d %s%s\n", domain, da.dnsQtype, strings.Join(s, " "), da.soa_t)
 
 				sumTries += dr.resend
 				domainCount += 1
@@ -254,12 +255,13 @@ func do_send(c net.Conn, tryResolving <-chan *domainRecord) {
 		dr := <-tryResolving
 
 		var t uint16
-		if !ipv6 {
-			t = dnsTypeA
-		} else {
+		if ipv6 {
 			t = dnsTypeAAAA
+		} else if soa {
+			t = dnsTypeSOA
+		} else {
+			t = dnsTypeA
 		}
-		if soa { t = dnsTypeSOA }
 		msg := packDns(dr.domain, dr.id, t)
 
 		_, err := c.Write(msg)
@@ -280,14 +282,7 @@ func do_receive(c net.Conn, resolved chan<- *domainAnswer) {
 			os.Exit(1)
 		}
 
-		var t uint16
-		if !ipv6 {
-			t = dnsTypeA
-		} else {
-			t = dnsTypeAAAA
-		}
-		if soa { t = dnsTypeSOA }
-		domain, id, ips, soa_t := unpackDns(buf[:n], t)
-		resolved <- &domainAnswer{id, domain, ips, soa_t}
+		domain, id, ips, soa_t, dnsQType := unpackDns(buf[:n])
+		resolved <- &domainAnswer{id, domain, ips, soa_t, dnsQType}
 	}
 }

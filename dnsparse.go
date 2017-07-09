@@ -6,7 +6,7 @@ import (
 	"os"
 )
 
-func unpackDns(msg []byte, dnsType uint16) (domain string, id uint16, ips []net.IP, soa_t string) {
+func unpackDns(msg []byte) (domain string, id uint16, ips []net.IP, soa_t string, dnsQType uint16) {
 	d := new(dnsMsg)
 	if !d.Unpack(msg) {
 		// fmt.Fprintf(os.Stderr, "dns error (unpacking)\n")
@@ -26,10 +26,13 @@ func unpackDns(msg []byte, dnsType uint16) (domain string, id uint16, ips []net.
 		return
 	}
 
-	_, addrs, err := answer(domain, "server", d, dnsType)
+	dnsQType = d.question[0].Qtype
+	_, addrs, err := answer(domain, "server", d, dnsQType)
 	//fmt.Printf (printStruct(d.answer[0]) + "\n")
+	//fmt.Println(d.String())
+	//fmt.Println(dnsQType)
 	if err == nil {
-		switch (dnsType) {
+		switch dnsQType {
 		case dnsTypeA:
 			ips = convertRR_A(addrs)
 		case dnsTypeAAAA:
