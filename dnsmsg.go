@@ -935,13 +935,35 @@ func convertRR_AAAA(records []dnsRR) []net.IP {
 }
 
 func convertRR_SOA(records []dnsRR) string {
-	addrs := make([]net.IP, len(records))
 	soa_line := ""
-	for i, rr := range records {
-		a := make(net.IP, net.IPv6len)
-		addrs[i] = a
+	for _, rr := range records {
 		// https://github.com/amit-tewari/go-dns-resolver/blob/master/dnsmsg.go#L302
-		soa_line += soa_line + fmt.Sprintf("%d %s %s", rr.(*dnsRR_SOA).Serial, rr.(*dnsRR_SOA).Ns, rr.(*dnsRR_SOA).Mbox)
+		soa_line += fmt.Sprintf("%d %s %s", rr.(*dnsRR_SOA).Serial, rr.(*dnsRR_SOA).Ns, rr.(*dnsRR_SOA).Mbox)
+	}
+	return soa_line
+}
+
+func convertRR_MX(records []dnsRR) string {
+	soa_line := ""
+	for _, rr := range records {
+		soa_line += fmt.Sprintf("%s:%d ", rr.(*dnsRR_MX).Mx, rr.(*dnsRR_MX).Pref)
+	}
+	return soa_line
+}
+
+func convertRR_TXT(records []dnsRR) string {
+	soa_line := ""
+	for _, rr := range records {
+		soa_line += fmt.Sprintf("\"%s\", ", rr.(*dnsRR_TXT).Txt)
+	}
+	return soa_line
+}
+
+func convertRR_(records []dnsRR) string {
+	soa_line := "\nGeneric Reply! See value printed above!\n"
+	for i, rr := range records {
+		//soa_line += fmt.Sprintf("%s:%d ", rr.(*dnsRR_MX).Mx, rr.(*dnsRR_MX).Pref)
+		fmt.Print(i, printStruct(rr))
 	}
 	return soa_line
 }

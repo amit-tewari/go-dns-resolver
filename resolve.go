@@ -49,6 +49,8 @@ var retryTime string
 var verbose bool
 var ipv6 bool
 var soa bool
+var mx bool
+var txt bool
 
 func init() {
 	flag.StringVar(&dnsServer, "server", "8.8.8.8:53",
@@ -63,6 +65,10 @@ func init() {
 		"Verbose logging")
 	flag.BoolVar(&soa, "soa", false,
 		"Query SOA records")
+	flag.BoolVar(&mx, "mx", false,
+		"Query MX records")
+	flag.BoolVar(&txt, "txt", false,
+		"Query TXT records")
 	flag.BoolVar(&ipv6, "6", false,
 		"Ipv6 - ask for AAAA, not A")
 }
@@ -259,6 +265,10 @@ func do_send(c net.Conn, tryResolving <-chan *domainRecord) {
 			t = dnsTypeAAAA
 		} else if soa {
 			t = dnsTypeSOA
+		} else if mx {
+			t = dnsTypeMX
+		} else if txt {
+			t = dnsTypeTXT
 		} else {
 			t = dnsTypeA
 		}

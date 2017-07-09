@@ -39,6 +39,10 @@ func unpackDns(msg []byte) (domain string, id uint16, ips []net.IP, soa_t string
 			ips = convertRR_AAAA(addrs)
 		case dnsTypeSOA:
 			soa_t = convertRR_SOA(addrs)
+		case dnsTypeMX:
+			soa_t = convertRR_MX(addrs)
+		case dnsTypeTXT:
+			soa_t = convertRR_TXT(addrs)
 		}
 	}
 	return
