@@ -41,20 +41,19 @@ func do_read_domains(domains chan<- string, domainSlotAvailable <-chan bool) {
 
 var sendingDelay time.Duration
 var retryDelay time.Duration
-
-var concurrency int
-var dnsServer string
 var packetsPerSecond int
+var concurrency int
+var dnsServerPool string
 var retryTime string
 var verbose bool
 var ipv6 bool
 var soa bool
-var mx bool
 var txt bool
+var mx bool
 
 func init() {
-	flag.StringVar(&dnsServer, "server", "8.8.8.8:53",
-		"DNS server address (ip:port)")
+	flag.StringVar(&dnsServerPool, "serverPool", "8.8.8.8,8.8.4.4",
+		"comma seperated DNS server address")
 	flag.IntVar(&concurrency, "concurrency", 5000,
 		"Internal buffer")
 	flag.IntVar(&packetsPerSecond, "pps", 120,
@@ -91,16 +90,33 @@ func main() {
 		os.Exit(1)
 	}
 
-	sendingDelay = time.Duration(1000000000/packetsPerSecond) * time.Nanosecond
+	dnsServers := strings.Split(dnsServerPool, ",")
+	dnsConnectionPool := make([]net.Conn, len(dnsServers))
+
 	var err error
+	validDnsServers := 0
+	for _, server := range dnsServers {
+		c, err := net.Dial("udp", server+":53")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "bind(udp, %s): %s\n", server, err)
+		} else {
+			dnsConnectionPool[validDnsServers] = c
+			validDnsServers++
+		}
+	}
+	if len(dnsConnectionPool) == 0 {
+		fmt.Println("No connection could be established")
+		os.Exit(1)
+	}
+	sendingDelay = time.Duration(1000000000/packetsPerSecond) * time.Nanosecond
 	retryDelay, err = time.ParseDuration(retryTime)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Can't parse duration %s\n", retryTime)
 		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "Server: %s, sending delay: %s (%d pps), retry delay: %s\n",
-		dnsServer, sendingDelay, packetsPerSecond, retryDelay)
+	fmt.Fprintf(os.Stderr, "Servers: %v, sending delay: %s (%d pps), retry delay: %s\n",
+		dnsServers, sendingDelay, packetsPerSecond, retryDelay)
 
 	domains := make(chan string, concurrency)
 	domainSlotAvailable := make(chan bool, concurrency)
@@ -111,12 +127,6 @@ func main() {
 
 	go do_read_domains(domains, domainSlotAvailable)
 
-	c, err := net.Dial("udp", dnsServer)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "bind(udp, %s): %s\n", dnsServer, err)
-		os.Exit(1)
-	}
-
 	// Used as a queue. Make sure it has plenty of storage available.
 	timeoutRegister := make(chan *domainRecord, concurrency*1000)
 	timeoutExpired := make(chan *domainRecord)
@@ -126,8 +136,10 @@ func main() {
 
 	go do_timeouter(timeoutRegister, timeoutExpired)
 
-	go do_send(c, tryResolving)
-	go do_receive(c, resolved)
+	go do_send(dnsConnectionPool, tryResolving)
+	for poolIndex, rConn := range dnsConnectionPool {
+		go do_receive(rConn, resolved, poolIndex)
+	}
 
 	t0 := time.Now()
 	domainsCount, avgTries := do_map_guard(domains, domainSlotAvailable,
@@ -261,7 +273,9 @@ func do_timeouter(timeoutRegister <-chan *domainRecord,
 	}
 }
 
-func do_send(c net.Conn, tryResolving <-chan *domainRecord) {
+func do_send(c []net.Conn, tryResolving <-chan *domainRecord) {
+	poolLength := len(c)
+	target := 0
 	for {
 		dr := <-tryResolving
 
@@ -280,23 +294,26 @@ func do_send(c net.Conn, tryResolving <-chan *domainRecord) {
 		msg := packDns(dr.domain, dr.id, t)
 
 		dr.time_sent = time.Now()
-
-		_, err := c.Write(msg)
+		target = target % poolLength
+		_, err := c[target].Write(msg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "write(udp): %s\n", err)
-			os.Exit(1)
+			fmt.Fprintf(os.Stderr, "error writing to Servers [%d]! %s will be retried with another server\nError: %s\n", target, dr.domain, err)
+			//os.Exit(1)
 		}
+		target++
 		time.Sleep(sendingDelay)
 	}
 }
 
-func do_receive(c net.Conn, resolved chan<- *domainAnswer) {
+func do_receive(c net.Conn, resolved chan<- *domainAnswer, poolIndex int) {
 	buf := make([]byte, 4096)
 	for {
 		n, err := c.Read(buf)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s\n", err)
-			os.Exit(1)
+			fmt.Fprintf(os.Stderr, "Server %d in pool seem to have issues reading replies! TAKING OUT OF POOL [Error %s]\n",
+				poolIndex+1, err)
+			return
 		}
 
 		domain, id, ips, soa_t, dnsQType := unpackDns(buf[:n])
