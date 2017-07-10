@@ -13,20 +13,37 @@ func unpackDns(msg []byte) (domain string, id uint16, ips []net.IP, soa_t string
 		return
 	}
 
+	domain = d.question[0].Name
+	if len(domain) < 1 {
+		// fmt.Fprintf(os.Stderr, "dns error (wrong domain in question)\n")
+		return
+	}
 	id = d.id
+	dnsQType = d.question[0].Qtype
+
+	switch d.rcode {
+	case dnsRcodeSuccess:
+		soa_t = ""
+	case dnsRcodeFormatError:
+		soa_t = "-ERR-FORMAT"
+	case dnsRcodeServerFailure:
+		soa_t = "-ERR-SERVFAIL"
+	case dnsRcodeNameError:
+		soa_t = "-ERR-NAME-ERROR"
+	case dnsRcodeNotImplemented:
+		soa_t = "-ERR-NOT-IMPLEMENTED"
+	case dnsRcodeRefused:
+		soa_t = "-ERR-REFUSED"
+	}
+	if d.rcode != dnsRcodeSuccess {
+		return
+	}
 
 	if len(d.question) < 1 {
 		// fmt.Fprintf(os.Stderr, "dns error (wrong question section)\n")
 		return
 	}
 
-	domain = d.question[0].Name
-	if len(domain) < 1 {
-		// fmt.Fprintf(os.Stderr, "dns error (wrong domain in question)\n")
-		return
-	}
-
-	dnsQType = d.question[0].Qtype
 	_, addrs, err := answer(domain, "server", d, dnsQType)
 	//fmt.Printf (printStruct(d.answer[0]) + "\n")
 	//fmt.Println(d.String())

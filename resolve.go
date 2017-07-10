@@ -142,18 +142,21 @@ func main() {
 }
 
 type domainRecord struct {
-	id      uint16
-	domain  string
-	timeout time.Time
-	resend  int
+	id          uint16
+	domain      string
+	timeout     time.Time
+	resend      int
+	time_queued time.Time
+	time_sent   time.Time
 }
 
 type domainAnswer struct {
-	id       uint16
-	domain   string
-	ips      []net.IP
-	soa_t    string
-	dnsQtype uint16
+	id           uint16
+	domain       string
+	ips          []net.IP
+	soa_t        string
+	dnsQtype     uint16
+	time_resolve time.Time
 }
 
 func do_map_guard(domains <-chan string,
@@ -185,7 +188,8 @@ func do_map_guard(domains <-chan string,
 					break
 				}
 			}
-			dr := &domainRecord{id, domain, time.Now(), 1}
+			time_now := time.Now()
+			dr := &domainRecord{id, domain, time_now, 1, time_now, time_now}
 			m[id] = dr
 			if verbose {
 				fmt.Fprintf(os.Stderr, "0x%04x resolving %s\n", id, domain)
@@ -229,7 +233,8 @@ func do_map_guard(domains <-chan string,
 
 				// without trailing dot
 				domain := dr.domain[:len(dr.domain)-1]
-				fmt.Printf("%s %d %s%s\n", domain, da.dnsQtype, strings.Join(s, " "), da.soa_t)
+				//
+				fmt.Printf("%s %d %d %d %s%s\n", domain, da.dnsQtype, int64(dr.time_sent.Sub(dr.time_queued)/time.Millisecond), int64(da.time_resolve.Sub(dr.time_sent)/time.Millisecond), strings.Join(s, " "), da.soa_t)
 
 				sumTries += dr.resend
 				domainCount += 1
@@ -274,6 +279,8 @@ func do_send(c net.Conn, tryResolving <-chan *domainRecord) {
 		}
 		msg := packDns(dr.domain, dr.id, t)
 
+		dr.time_sent = time.Now()
+
 		_, err := c.Write(msg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "write(udp): %s\n", err)
@@ -293,6 +300,6 @@ func do_receive(c net.Conn, resolved chan<- *domainAnswer) {
 		}
 
 		domain, id, ips, soa_t, dnsQType := unpackDns(buf[:n])
-		resolved <- &domainAnswer{id, domain, ips, soa_t, dnsQType}
+		resolved <- &domainAnswer{id, domain, ips, soa_t, dnsQType, time.Now()}
 	}
 }
