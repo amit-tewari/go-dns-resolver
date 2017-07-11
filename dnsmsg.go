@@ -25,6 +25,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"time"
 )
 
 // Integer to decimal.
@@ -938,7 +939,7 @@ func convertRR_SOA(records []dnsRR) string {
 	soa_line := ""
 	for _, rr := range records {
 		// https://github.com/amit-tewari/go-dns-resolver/blob/master/dnsmsg.go#L302
-		soa_line += fmt.Sprintf("%d %s %s", rr.(*dnsRR_SOA).Serial, rr.(*dnsRR_SOA).Ns, rr.(*dnsRR_SOA).Mbox)
+		soa_line += fmt.Sprintf("%d %d %s %s", time.Now().Unix(), rr.(*dnsRR_SOA).Serial, rr.(*dnsRR_SOA).Ns, rr.(*dnsRR_SOA).Mbox)
 	}
 	return soa_line
 }
