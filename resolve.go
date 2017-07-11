@@ -91,17 +91,33 @@ func main() {
 	}
 
 	dnsServers := strings.Split(dnsServerPool, ",")
-	dnsConnectionPool := make([]net.Conn, len(dnsServers))
+	healthyDnsServers := make([]string, 0, len(dnsServers))
+	dnsConnectionPool := make([]net.Conn, 0, len(dnsServers))
 
 	var err error
-	validDnsServers := 0
 	for _, server := range dnsServers {
 		c, err := net.Dial("udp", server+":53")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "bind(udp, %s): %s\n", server, err)
 		} else {
-			dnsConnectionPool[validDnsServers] = c
-			validDnsServers++
+			id_sent := uint16(rand.Int())
+			msg := packDns("google.com", id_sent, dnsTypeA)
+			n, _ := c.Write(msg)
+			c.SetReadDeadline(time.Now().Add(2 * time.Second))
+			fmt.Fprintf(os.Stderr, "Checking if server %s responding correcly under 2 second delay! ", server)
+			buf := make([]byte, 4096)
+			n, err = c.Read(buf)
+			if err == nil {
+				c.SetReadDeadline(time.Time{})
+				domain, id_returned, _, _, _ := unpackDns(buf[:n])
+				if domain == "google.com." && id_sent == id_returned {
+					fmt.Fprintf(os.Stderr, "server verified : %s\n", server)
+					dnsConnectionPool = append(dnsConnectionPool, c)
+					healthyDnsServers = append(healthyDnsServers, server)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "Encountered error with %s, not adding to DNS pool\n", server)
+			}
 		}
 	}
 	if len(dnsConnectionPool) == 0 {
@@ -115,8 +131,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "Servers: %v, sending delay: %s (%d pps), retry delay: %s\n",
-		dnsServers, sendingDelay, packetsPerSecond, retryDelay)
+	fmt.Fprintf(os.Stderr, "\n%d Server in pool : %v, sending delay: %s (%d pps), retry delay: %s\n\n",
+		len(healthyDnsServers), healthyDnsServers, sendingDelay, packetsPerSecond, retryDelay)
 
 	domains := make(chan string, concurrency)
 	domainSlotAvailable := make(chan bool, concurrency)
