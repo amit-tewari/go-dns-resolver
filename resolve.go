@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func do_read_domains(domains chan<- string, domainSlotAvailable <-chan bool) {
+func do_read_domains(domains chan<- string, domainsFullLookUp chan<- string, domainSlotAvailable <-chan bool) {
 	in := bufio.NewReader(os.Stdin)
 
 	for _ = range domainSlotAvailable {
@@ -34,7 +34,11 @@ func do_read_domains(domains chan<- string, domainSlotAvailable <-chan bool) {
 
 		domain := input + "."
 
-		domains <- domain
+		if all {
+			domainsFullLookUp <- domain
+		} else {
+			domains <- domain
+		}
 	}
 	close(domains)
 }
@@ -50,6 +54,7 @@ var ipv6 bool
 var soa bool
 var txt bool
 var mx bool
+var all bool
 
 func init() {
 	flag.StringVar(&dnsServerPool, "serverPool", "8.8.8.8,8.8.4.4",
@@ -70,6 +75,8 @@ func init() {
 		"Query TXT records")
 	flag.BoolVar(&ipv6, "6", false,
 		"Ipv6 - ask for AAAA, not A")
+	flag.BoolVar(&all, "all", false,
+		"Perform lookups for all query types")
 }
 
 func main() {
@@ -83,6 +90,7 @@ func main() {
 		flag.PrintDefaults()
 	}
 
+	allQTypes := []uint16{dnsTypeA, dnsTypeSOA, dnsTypeAAAA, dnsTypeMX, dnsTypeTXT}
 	flag.Parse()
 
 	if flag.NArg() != 0 {
@@ -130,24 +138,28 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Can't parse duration %s\n", retryTime)
 		os.Exit(1)
 	}
+	qtypes := ""
+	if all {
+		qtypes = fmt.Sprintf("DNS Query types : %v", allQTypes)
+	}
+	fmt.Fprintf(os.Stderr, "\n%d Server in pool : %v, %s sending delay: %s (%d pps), retry delay: %s\n\n",
+		len(healthyDnsServers), healthyDnsServers, qtypes, sendingDelay, packetsPerSecond, retryDelay)
 
-	fmt.Fprintf(os.Stderr, "\n%d Server in pool : %v, sending delay: %s (%d pps), retry delay: %s\n\n",
-		len(healthyDnsServers), healthyDnsServers, sendingDelay, packetsPerSecond, retryDelay)
-
-	domains := make(chan string, concurrency)
 	domainSlotAvailable := make(chan bool, concurrency)
 
 	for i := 0; i < concurrency; i++ {
 		domainSlotAvailable <- true
 	}
+	domains := make(chan string, concurrency)
+	domainsFullLookUp := make(chan string, concurrency)
 
-	go do_read_domains(domains, domainSlotAvailable)
+	go do_read_domains(domains, domainsFullLookUp, domainSlotAvailable)
 
 	// Used as a queue. Make sure it has plenty of storage available.
 	timeoutRegister := make(chan *domainRecord, concurrency*1000)
 	timeoutExpired := make(chan *domainRecord)
 
-	resolved := make(chan *domainAnswer, concurrency)
+	resolved := make(chan *domainAnswer, concurrency*5)
 	tryResolving := make(chan *domainRecord, concurrency)
 
 	go do_timeouter(timeoutRegister, timeoutExpired)
@@ -158,9 +170,9 @@ func main() {
 	}
 
 	t0 := time.Now()
-	domainsCount, avgTries := do_map_guard(domains, domainSlotAvailable,
+	domainsCount, avgTries := do_map_guard(domains, domainsFullLookUp, domainSlotAvailable,
 		timeoutRegister, timeoutExpired,
-		tryResolving, resolved)
+		tryResolving, resolved, allQTypes)
 	td := time.Now().Sub(t0)
 	fmt.Fprintf(os.Stderr, "Resolved %d domains in %.3fs. Average retries %.3f. Domains per second: %.3f\n",
 		domainsCount,
@@ -176,6 +188,7 @@ type domainRecord struct {
 	resend      int
 	time_queued time.Time
 	time_sent   time.Time
+	dnsQtype    uint16
 }
 
 type domainAnswer struct {
@@ -188,11 +201,13 @@ type domainAnswer struct {
 }
 
 func do_map_guard(domains <-chan string,
+	domainsFullLookUp <-chan string,
 	domainSlotAvailable chan<- bool,
 	timeoutRegister chan<- *domainRecord,
 	timeoutExpired <-chan *domainRecord,
 	tryResolving chan<- *domainRecord,
-	resolved <-chan *domainAnswer) (int, float64) {
+	resolved <-chan *domainAnswer,
+	allQTypes []uint16) (int, float64) {
 
 	m := make(map[uint16]*domainRecord)
 
@@ -200,7 +215,6 @@ func do_map_guard(domains <-chan string,
 
 	sumTries := 0
 	domainCount := 0
-
 	for done == false || len(m) > 0 {
 		select {
 		case domain := <-domains:
@@ -217,13 +231,49 @@ func do_map_guard(domains <-chan string,
 				}
 			}
 			time_now := time.Now()
-			dr := &domainRecord{id, domain, time_now, 1, time_now, time_now}
+			dr := &domainRecord{id, domain, time_now, 1, time_now, time_now, 0}
+			if ipv6 {
+				dr.dnsQtype = dnsTypeAAAA
+			} else if soa {
+				dr.dnsQtype = dnsTypeSOA
+			} else if mx {
+				dr.dnsQtype = dnsTypeMX
+			} else if txt {
+				dr.dnsQtype = dnsTypeTXT
+			} else {
+				dr.dnsQtype = dnsTypeA
+			}
 			m[id] = dr
 			if verbose {
 				fmt.Fprintf(os.Stderr, "0x%04x resolving %s\n", id, domain)
 			}
 			timeoutRegister <- dr
 			tryResolving <- dr
+
+		case domain := <-domainsFullLookUp:
+			if domain == "" {
+				domainsFullLookUp = make(chan string)
+				done = true
+				break
+			}
+
+			for _, qtype := range allQTypes {
+				var id uint16
+				for {
+					id = uint16(rand.Int())
+					if id != 0 && m[id] == nil {
+						break
+					}
+				}
+				time_now := time.Now()
+				dr := &domainRecord{id, domain, time_now, 1, time_now, time_now, qtype}
+				m[id] = dr
+				if verbose {
+					fmt.Fprintf(os.Stderr, "0x%04x resolving %s\n", id, domain)
+				}
+				timeoutRegister <- dr
+				tryResolving <- dr
+			}
 
 		case dr := <-timeoutExpired:
 			if m[dr.id] == dr {
@@ -262,13 +312,22 @@ func do_map_guard(domains <-chan string,
 				// without trailing dot
 				domain := dr.domain[:len(dr.domain)-1]
 				//
-				fmt.Printf("%s %d %d %d %s%s\n", domain, da.dnsQtype, int64(dr.time_sent.Sub(dr.time_queued)/time.Millisecond), int64(da.time_resolve.Sub(dr.time_sent)/time.Millisecond), strings.Join(s, " "), da.soa_t)
+				fmt.Printf("%s %d %d %d %s%s\n",
+					domain,
+					da.dnsQtype,
+					int64(dr.time_sent.Sub(dr.time_queued)/time.Millisecond),
+					int64(da.time_resolve.Sub(dr.time_sent)/time.Millisecond),
+					strings.Join(s, " "),
+					da.soa_t)
 
 				sumTries += dr.resend
 				domainCount += 1
 
 				delete(m, dr.id)
-				domainSlotAvailable <- true
+				select {
+				case domainSlotAvailable <- true:
+				default:
+				}
 			}
 		}
 	}
@@ -295,20 +354,10 @@ func do_send(c []net.Conn, tryResolving <-chan *domainRecord) {
 	for {
 		dr := <-tryResolving
 
-		var t uint16
-		if ipv6 {
-			t = dnsTypeAAAA
-		} else if soa {
-			t = dnsTypeSOA
-		} else if mx {
-			t = dnsTypeMX
-		} else if txt {
-			t = dnsTypeTXT
-		} else {
-			t = dnsTypeA
+		msg := packDns(dr.domain, dr.id, dr.dnsQtype)
+		if verbose {
+			fmt.Printf("sending %s type %d ", dr.domain, dr.dnsQtype)
 		}
-		msg := packDns(dr.domain, dr.id, t)
-
 		dr.time_sent = time.Now()
 		target = target % poolLength
 		_, err := c[target].Write(msg)
@@ -333,6 +382,12 @@ func do_receive(c net.Conn, resolved chan<- *domainAnswer, poolIndex int) {
 		}
 
 		domain, id, ips, soa_t, dnsQType := unpackDns(buf[:n])
+		if verbose {
+			fmt.Printf(" received %s type %d\n", domain, dnsQType)
+		}
 		resolved <- &domainAnswer{id, domain, ips, soa_t, dnsQType, time.Now()}
+		if verbose {
+			fmt.Printf(" pushed on received chan %s type %d\n", domain, dnsQType)
+		}
 	}
 }
