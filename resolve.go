@@ -13,7 +13,8 @@ import (
 	"time"
 )
 
-func do_read_domains(domains chan<- string, domainsFullLookUp chan<- string, domainSlotAvailable <-chan bool) {
+func do_read_domains(domains chan<- string,
+	domainSlotAvailable <-chan bool) {
 	in := bufio.NewReader(os.Stdin)
 
 	for _ = range domainSlotAvailable {
@@ -33,12 +34,7 @@ func do_read_domains(domains chan<- string, domainsFullLookUp chan<- string, dom
 		}
 
 		domain := input + "."
-
-		if all {
-			domainsFullLookUp <- domain
-		} else {
-			domains <- domain
-		}
+		domains <- domain
 	}
 	close(domains)
 }
@@ -151,9 +147,9 @@ func main() {
 		domainSlotAvailable <- true
 	}
 	domains := make(chan string, concurrency)
-	domainsFullLookUp := make(chan string, concurrency)
 
-	go do_read_domains(domains, domainsFullLookUp, domainSlotAvailable)
+	go do_read_domains(domains,
+		domainSlotAvailable)
 
 	// Used as a queue. Make sure it has plenty of storage available.
 	timeoutRegister := make(chan *domainRecord, concurrency*1000)
@@ -170,9 +166,13 @@ func main() {
 	}
 
 	t0 := time.Now()
-	domainsCount, avgTries := do_map_guard(domains, domainsFullLookUp, domainSlotAvailable,
-		timeoutRegister, timeoutExpired,
-		tryResolving, resolved, allQTypes)
+	domainsCount, avgTries := do_map_guard(domains,
+		domainSlotAvailable,
+		timeoutRegister,
+		timeoutExpired,
+		tryResolving,
+		resolved,
+		allQTypes)
 	td := time.Now().Sub(t0)
 	fmt.Fprintf(os.Stderr, "Resolved %d domains in %.3fs. Average retries %.3f. Domains per second: %.3f\n",
 		domainsCount,
@@ -201,7 +201,6 @@ type domainAnswer struct {
 }
 
 func do_map_guard(domains <-chan string,
-	domainsFullLookUp <-chan string,
 	domainSlotAvailable chan<- bool,
 	timeoutRegister chan<- *domainRecord,
 	timeoutExpired <-chan *domainRecord,
@@ -223,41 +222,31 @@ func do_map_guard(domains <-chan string,
 				done = true
 				break
 			}
-			var id uint16
-			for {
-				id = uint16(rand.Int())
-				if id != 0 && m[id] == nil {
-					break
+			if all {
+				for _, qtype := range allQTypes {
+					var id uint16
+					for {
+						id = uint16(rand.Int())
+						if id != 0 && m[id] == nil {
+							break
+						}
+					}
+					time_now := time.Now()
+					dr := &domainRecord{id,
+						domain,
+						time_now,
+						1,
+						time_now,
+						time_now,
+						qtype}
+					m[id] = dr
+					if verbose {
+						fmt.Fprintf(os.Stderr, "0x%04x resolving %s\n", id, domain)
+					}
+					timeoutRegister <- dr
+					tryResolving <- dr
 				}
-			}
-			time_now := time.Now()
-			dr := &domainRecord{id, domain, time_now, 1, time_now, time_now, 0}
-			if ipv6 {
-				dr.dnsQtype = dnsTypeAAAA
-			} else if soa {
-				dr.dnsQtype = dnsTypeSOA
-			} else if mx {
-				dr.dnsQtype = dnsTypeMX
-			} else if txt {
-				dr.dnsQtype = dnsTypeTXT
 			} else {
-				dr.dnsQtype = dnsTypeA
-			}
-			m[id] = dr
-			if verbose {
-				fmt.Fprintf(os.Stderr, "0x%04x resolving %s\n", id, domain)
-			}
-			timeoutRegister <- dr
-			tryResolving <- dr
-
-		case domain := <-domainsFullLookUp:
-			if domain == "" {
-				domainsFullLookUp = make(chan string)
-				done = true
-				break
-			}
-
-			for _, qtype := range allQTypes {
 				var id uint16
 				for {
 					id = uint16(rand.Int())
@@ -266,7 +255,24 @@ func do_map_guard(domains <-chan string,
 					}
 				}
 				time_now := time.Now()
-				dr := &domainRecord{id, domain, time_now, 1, time_now, time_now, qtype}
+				dr := &domainRecord{id,
+					domain,
+					time_now,
+					1,
+					time_now,
+					time_now,
+					0}
+				if ipv6 {
+					dr.dnsQtype = dnsTypeAAAA
+				} else if soa {
+					dr.dnsQtype = dnsTypeSOA
+				} else if mx {
+					dr.dnsQtype = dnsTypeMX
+				} else if txt {
+					dr.dnsQtype = dnsTypeTXT
+				} else {
+					dr.dnsQtype = dnsTypeA
+				}
 				m[id] = dr
 				if verbose {
 					fmt.Fprintf(os.Stderr, "0x%04x resolving %s\n", id, domain)
