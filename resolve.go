@@ -280,8 +280,10 @@ func do_map_guard(domains <-chan string,
 					fmt.Fprintf(os.Stderr, "0x%04x resend (try:%d) %s\n", dr.id,
 						dr.resend, dr.domain)
 				}
-				timeoutRegister <- dr
-				tryResolving <- dr
+				if dr.resend < 3 {
+					timeoutRegister <- dr
+					tryResolving <- dr
+				}
 			}
 
 		case da := <-resolved:
