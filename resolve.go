@@ -51,6 +51,7 @@ var soa bool
 var txt bool
 var mx bool
 var all bool
+var a bool
 
 func init() {
 	flag.StringVar(&dnsServerPool, "serverPool", "8.8.8.8,8.8.4.4",
@@ -69,6 +70,8 @@ func init() {
 		"Query MX records")
 	flag.BoolVar(&txt, "txt", false,
 		"Query TXT records")
+	flag.BoolVar(&a, "a", false,
+		"Query A records")
 	flag.BoolVar(&ipv6, "6", false,
 		"Ipv6 - ask for AAAA, not A")
 	flag.BoolVar(&all, "all", false,
@@ -86,12 +89,36 @@ func main() {
 		flag.PrintDefaults()
 	}
 
-	allQTypes := []uint16{dnsTypeA, dnsTypeSOA, dnsTypeAAAA, dnsTypeMX, dnsTypeTXT}
 	flag.Parse()
 
 	if flag.NArg() != 0 {
 		flag.Usage()
 		os.Exit(1)
+	}
+
+	allQTypes := []uint16{dnsTypeA, dnsTypeSOA, dnsTypeMX, dnsTypeTXT, dnsTypeAAAA}
+	queryFor := make([]uint16, 0, len(allQTypes))
+	if all {
+		queryFor = allQTypes
+	} else {
+		if a {
+			queryFor = append(queryFor, dnsTypeA)
+		}
+		if soa {
+			queryFor = append(queryFor, dnsTypeSOA)
+		}
+		if mx {
+			queryFor = append(queryFor, dnsTypeMX)
+		}
+		if txt {
+			queryFor = append(queryFor, dnsTypeTXT)
+		}
+		if ipv6 {
+			queryFor = append(queryFor, dnsTypeAAAA)
+		}
+		if len(queryFor) == 0 {
+			queryFor = append(queryFor, dnsTypeA)
+		}
 	}
 
 	dnsServers := strings.Split(dnsServerPool, ",")
@@ -115,7 +142,7 @@ func main() {
 				c.SetReadDeadline(time.Time{})
 				domain, id_returned, _, _, _ := unpackDns(buf[:n])
 				if domain == "google.com." && id_sent == id_returned {
-					fmt.Fprintf(os.Stderr, "server verified : %s\n", server)
+					fmt.Fprintf(os.Stderr, "server verified and added to pool: %s\n", server)
 					dnsConnectionPool = append(dnsConnectionPool, c)
 					healthyDnsServers = append(healthyDnsServers, server)
 				}
@@ -134,10 +161,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Can't parse duration %s\n", retryTime)
 		os.Exit(1)
 	}
-	qtypes := ""
-	if all {
-		qtypes = fmt.Sprintf("DNS Query types : %v", allQTypes)
-	}
+	qtypes := fmt.Sprintf("types queried : %v", queryFor)
 	fmt.Fprintf(os.Stderr, "\n%d Server in pool : %v, %s sending delay: %s (%d pps), retry delay: %s\n\n",
 		len(healthyDnsServers), healthyDnsServers, qtypes, sendingDelay, packetsPerSecond, retryDelay)
 
@@ -172,9 +196,10 @@ func main() {
 		timeoutExpired,
 		tryResolving,
 		resolved,
-		allQTypes)
+		allQTypes,
+		queryFor)
 	td := time.Now().Sub(t0)
-	fmt.Fprintf(os.Stderr, "Resolved %d domains in %.3fs. Average retries %.3f. Domains per second: %.3f\n",
+	fmt.Fprintf(os.Stderr, "\nResolved %d domains in %.3fs. Average retries %.3f. Domains per second: %.3f\n",
 		domainsCount,
 		td.Seconds(),
 		avgTries,
@@ -206,7 +231,8 @@ func do_map_guard(domains <-chan string,
 	timeoutExpired <-chan *domainRecord,
 	tryResolving chan<- *domainRecord,
 	resolved <-chan *domainAnswer,
-	allQTypes []uint16) (int, float64) {
+	allQTypes []uint16,
+	queryFor []uint16) (int, float64) {
 
 	m := make(map[uint16]*domainRecord)
 
@@ -222,31 +248,7 @@ func do_map_guard(domains <-chan string,
 				done = true
 				break
 			}
-			if all {
-				for _, qtype := range allQTypes {
-					var id uint16
-					for {
-						id = uint16(rand.Int())
-						if id != 0 && m[id] == nil {
-							break
-						}
-					}
-					time_now := time.Now()
-					dr := &domainRecord{id,
-						domain,
-						time_now,
-						1,
-						time_now,
-						time_now,
-						qtype}
-					m[id] = dr
-					if verbose {
-						fmt.Fprintf(os.Stderr, "0x%04x resolving %s\n", id, domain)
-					}
-					timeoutRegister <- dr
-					tryResolving <- dr
-				}
-			} else {
+			for _, qtype := range queryFor {
 				var id uint16
 				for {
 					id = uint16(rand.Int())
@@ -261,18 +263,7 @@ func do_map_guard(domains <-chan string,
 					1,
 					time_now,
 					time_now,
-					0}
-				if ipv6 {
-					dr.dnsQtype = dnsTypeAAAA
-				} else if soa {
-					dr.dnsQtype = dnsTypeSOA
-				} else if mx {
-					dr.dnsQtype = dnsTypeMX
-				} else if txt {
-					dr.dnsQtype = dnsTypeTXT
-				} else {
-					dr.dnsQtype = dnsTypeA
-				}
+					qtype}
 				m[id] = dr
 				if verbose {
 					fmt.Fprintf(os.Stderr, "0x%04x resolving %s\n", id, domain)
