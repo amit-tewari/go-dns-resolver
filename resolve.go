@@ -8,8 +8,10 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -188,6 +190,16 @@ func main() {
 	for poolIndex, rConn := range dnsConnectionPool {
 		go do_receive(rConn, resolved, poolIndex)
 	}
+
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGUSR1)
+	go dump_channel_capacities(c,
+		domains,
+		domainSlotAvailable,
+		timeoutRegister,
+		timeoutExpired,
+		tryResolving,
+		resolved)
 
 	t0 := time.Now()
 	domainsCount, avgTries := do_map_guard(domains,
@@ -388,5 +400,35 @@ func do_receive(c net.Conn, resolved chan<- *domainAnswer, poolIndex int) {
 		if verbose {
 			fmt.Printf(" pushed on received chan %s type %d\n", domain, dnsQType)
 		}
+	}
+}
+
+func dump_channel_capacities(c <-chan os.Signal,
+	domains <-chan string,
+	domainSlotAvailable chan<- bool,
+	timeoutRegister chan<- *domainRecord,
+	timeoutExpired <-chan *domainRecord,
+	tryResolving chan<- *domainRecord,
+	resolved <-chan *domainAnswer) {
+	var s os.Signal
+	for {
+		select {
+		case s = <-c:
+		default:
+			time.Sleep(5 * time.Second)
+		}
+		fmt.Fprintf(os.Stderr, "Got signal: %v\n", s)
+		fmt.Fprintf(os.Stderr, "Used capacity: Signal Channel=%v\ndomains=%v Slots=%v TORegister=%v TOExpired=%v TryResolving=%v resolved=%v\n",
+			len(c),
+			len(domainSlotAvailable),
+			len(domains),
+			len(timeoutRegister),
+			len(timeoutExpired),
+			len(tryResolving),
+			len(resolved))
+		/*for i := 0; i < 10; i++ {
+		        domainSlotAvailable <- true
+		        fmt.Fprintf(os.Stderr, <-domains)
+		}*/
 	}
 }
