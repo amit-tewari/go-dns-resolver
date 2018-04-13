@@ -1,0 +1,22 @@
+trigger go_routine(PROCESS_DELETED_DOMAIN)
+trigger go_routine(PROCESS_NEW_DOMAIN)
+trigger go_routine(PROCESS_OLD_DOMAIN)
+
+for each pool (domain name) from today
+    for each domain in pool
+        read domain
+        add domain to pool's set
+    for each domain in pool's soa-list (domain name, soa)
+        read domain
+        if domain in pool's set
+            add (domain name, soa) to global map
+        else if domain NOT in pool's set
+            add domain to PROCESS_DELETED_DOMAIN list/ go channel
+    for each domain in pool's set
+        if domain's soa NON-EMPTY in global map
+            add domain to PROCESS_OLD_DOMAIN list/ go channel
+        else if domain's soa EMPTY in global map
+            add domain to PROCESS_NEW_DOMAIN list/ go channel
+    trigger go_routine(reaper, current_pool_id -2)
+
+trigger go_routine(final_reaper)
